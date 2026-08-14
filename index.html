@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PETROLOG-PRO // Advanced Well Log Evaluator</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <!-- React, ReactDOM, and Babel CDNs -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body class="min-h-screen transition-colors duration-200">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo } = React;
+
+    // --- ICON COMPONENTS ---
+    const IconActivity = ({ className = "w-5 h-5" }) => (
+      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M22 12h-4l-3 9L9 3l-3 9H2" />
+      </svg>
+    );
+
+    const IconSliders = ({ className = "w-4 h-4" }) => (
+      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+      </svg>
+    );
+
+    const IconFilter = ({ className = "w-4 h-4" }) => (
+      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+      </svg>
+    );
+
+    const IconRefresh = ({ className = "w-3.5 h-3.5" }) => (
+      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+    );
+
+    const IconDownload = ({ className = "w-3.5 h-3.5" }) => (
+      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+      </svg>
+    );
+
+    const IconPlus = ({ className = "w-3.5 h-3.5" }) => (
+      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+      </svg>
+    );
+
+    const IconCode = ({ className = "w-3.5 h-3.5" }) => (
+      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+      </svg>
+    );
+
+    // --- PHYSICAL BOUNDS & SANITIZATION ---
+    const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
+
+    const sanitizeRow = (r) => {
+      const depth = isNaN(r.depth) ? 2000 : parseFloat(r.depth);
+      const gr = clamp(isNaN(r.gr) ? 60 : parseFloat(r.gr), 0, 300); // 0 to 300 API
+      const res = clamp(isNaN(r.res) ? 10 : parseFloat(r.res), 0.1, 5000); // 0.1 to 5000 Ohm-m
+      const rhob = clamp(isNaN(r.rhob) ? 2.35 : parseFloat(r.rhob), 1.0, 3.5); // 1.0 to 3.5 g/cc
+      const nphi = clamp(isNaN(r.nphi) ? 0.20 : parseFloat(r.nphi), -0.05, 0.60); // -0.05 to 0.60 dec
+      const cali = clamp(isNaN(r.cali) ? 8.5 : parseFloat(r.cali), 4.0, 24.0); // 4 to 24 inches
+
+      return { depth, gr, res, rhob, nphi, cali };
+    };
+
+    // --- SYNTHETIC LOG GENERATOR ---
+    const generateSyntheticLogData = () => {
+      const data = [];
+      for (let d = 2050; d <= 2150; d += 0.5) {
+        let gr, res, rhob, nphi, cali;
+
+        if (d < 2070) { // Top Shale
+          gr = 95 + Math.sin(d * 0.8) * 15 + Math.random() * 8;
+          res = 2.0 + Math.random() * 0.8;
+          rhob = 2.55 + Math.random() * 0.08;
+          nphi = 0.38 + Math.random() * 0.04;
+          cali = 9.2 + Math.random() * 0.3;
+        } else if (d < 2095) { // Gas Sand (Crossover)
+          gr = 25 + Math.sin(d * 0.3) * 8 + Math.random() * 5;
+          res = 85 + Math.cos(d * 0.2) * 25 + Math.random() * 15;
+          rhob = 2.18 + Math.random() * 0.05;
+          nphi = 0.12 + Math.random() * 0.03;
+          cali = 8.5 + Math.random() * 0.1;
+        } else if (d < 2118) { // Oil Sand
+          gr = 32 + Math.sin(d * 0.5) * 10 + Math.random() * 6;
+          res = 35 + Math.cos(d * 0.4) * 10 + Math.random() * 8;
+          rhob = 2.28 + Math.random() * 0.06;
+          nphi = 0.22 + Math.random() * 0.03;
+          cali = 8.5 + Math.random() * 0.1;
+        } else if (d < 2135) { // Water Sand
+          gr = 28 + Math.sin(d * 0.4) * 7 + Math.random() * 5;
+          res = 1.2 + Math.random() * 0.5;
+          rhob = 2.34 + Math.random() * 0.05;
+          nphi = 0.26 + Math.random() * 0.03;
+          cali = 8.5 + Math.random() * 0.1;
+        } else { // Basal Shale
+          gr = 110 + Math.cos(d * 0.6) * 18 + Math.random() * 8;
+          res = 2.5 + Math.random() * 0.6;
+          rhob = 2.58 + Math.random() * 0.06;
+          nphi = 0.40 + Math.random() * 0.04;
+          cali = 9.0 + Math.random() * 0.2;
+        }
+
+        data.push(sanitizeRow({ depth: d, gr, res, rhob, nphi, cali }));
+      }
+      return data;
+    };
+
+    function App() {
+      // Theme State: 'slate' (Cyber Dark), 'light' (Clean White), 'obsidian' (High Contrast Black)
+      const [theme, setTheme] = useState('slate');
+
+      const [rawData, setRawData] = useState(() => generateSyntheticLogData());
+      const [hoveredIndex, setHoveredIndex] = useState(null);
+
+      // Petrophysical & Archie Parameters
+      const [rw, setRw] = useState(0.045);
+      const [a, setA] = useState(1.0);
+      const [m, setM] = useState(2.0);
+      const [n, setN] = useState(2.0);
+      const [rhoMatrix, setRhoMatrix] = useState(2.65);
+      const [rhoFluid, setRhoFluid] = useState(1.0);
+
+      // Cutoffs
+      const [vshCutoff, setVshCutoff] = useState(0.35);
+      const [phiCutoff, setPhiCutoff] = useState(0.10);
+      const [swCutoff, setSwCutoff] = useState(0.50);
+
+      // Baseline limits for shale volume calculation
+      const [grClean, setGrClean] = useState(20);
+      const [grShale, setGrShale] = useState(120);
+
+      // Custom Input Modals / Panels
+      const [showAddPointModal, setShowAddPointModal] = useState(false);
+      const [showManualEditor, setShowManualEditor] = useState(false);
+      const [manualText, setManualText] = useState('');
+      const [customPoint, setCustomPoint] = useState({
+        depth: 2090.0,
+        gr: 30.0,
+        res: 45.0,
+        rhob: 2.25,
+        nphi: 0.18,
+        cali: 8.5
+      });
+
+      // --- COLOR THEME DICTIONARY ---
+      const themeStyles = useMemo(() => {
+        if (theme === 'light') {
+          return {
+            appBg: 'bg-zinc-100 text-zinc-900',
+            headerBg: 'bg-white/80 border-zinc-200',
+            cardBg: 'bg-white border-zinc-200 shadow-sm',
+            trackBg: '#ffffff',
+            gridLine: '#e4e4e7',
+            border: 'border-zinc-200',
+            subText: 'text-zinc-500',
+            inputBg: 'bg-zinc-50 border-zinc-300 text-zinc-900',
+            accentTrack: '#0284c7'
+          };
+        }
+        if (theme === 'obsidian') {
+          return {
+            appBg: 'bg-black text-neutral-100',
+            headerBg: 'bg-neutral-950 border-neutral-800',
+            cardBg: 'bg-neutral-950 border-neutral-800',
+            trackBg: '#000000',
+            gridLine: '#262626',
+            border: 'border-neutral-800',
+            subText: 'text-neutral-400',
+            inputBg: 'bg-neutral-900 border-neutral-800 text-neutral-100',
+            accentTrack: '#38bdf8'
+          };
+        }
+        // Default: Slate Dark
+        return {
+          appBg: 'bg-slate-950 text-slate-100',
+          headerBg: 'bg-slate-900/90 border-slate-800',
+          cardBg: 'bg-slate-900/80 border-slate-800',
+          trackBg: '#020617',
+          gridLine: '#1e293b',
+          border: 'border-slate-800',
+          subText: 'text-slate-400',
+          inputBg: 'bg-slate-950 border-slate-800 text-slate-100',
+          accentTrack: '#38bdf8'
+        };
+      }, [theme]);
+
+      // --- PETROPHYSICAL COMPUTATION PIPELINE WITH SANITY CAPS ---
+      const computedLogs = useMemo(() => {
+        const sorted = [...rawData].sort((a, b) => a.depth - b.depth);
+
+        return sorted.map((row) => {
+          // 1. Volume of Shale (Linear GR index with safety divisor)
+          const denom = Math.max(1, grShale - grClean);
+          let vsh = (row.gr - grClean) / denom;
+          vsh = clamp(vsh, 0.0, 1.0);
+
+          // 2. Density Porosity
+          const rhoDenom = Math.max(0.1, rhoMatrix - rhoFluid);
+          let phiD = (rhoMatrix - row.rhob) / rhoDenom;
+          phiD = clamp(phiD, 0.0, 0.50); // Capped at 50% max porosity
+
+          // 3. Effective Porosity
+          const phiE = clamp(phiD * (1 - vsh), 0.001, 0.50);
+
+          // 4. Archie Water Saturation (Capped at 1.0 to prevent absurd numbers)
+          const f = (a * rw) / (Math.pow(phiE, m) * Math.max(0.1, row.res));
+          let sw = Math.pow(Math.max(0, f), 1 / Math.max(0.1, n));
+          sw = clamp(sw, 0.01, 1.0); // 1% to 100%
+
+          // 5. Pay Criteria
+          const isReservoir = vsh <= vshCutoff && phiE >= phiCutoff;
+          const isPay = isReservoir && sw <= swCutoff;
+
+          return {
+            ...row,
+            vsh,
+            phiE,
+            sw,
+            isReservoir,
+            isPay
+          };
+        });
+      }, [rawData, rw, a, m, n, rhoMatrix, rhoFluid, vshCutoff, phiCutoff, swCutoff, grClean, grShale]);
+
+      // --- RESERVOIR KPIs ---
+      const metrics = useMemo(() => {
+        const total = computedLogs.length;
+        if (total === 0) return { gross: 0, netRes: 0, netPay: 0, ntg: 0, avgPhi: 0, avgSw: 0, avgShc: 0 };
+
+        const minD = computedLogs[0].depth;
+        const maxD = computedLogs[total - 1].depth;
+        const grossInterval = Math.max(1, maxD - minD);
+
+        const paySamples = computedLogs.filter((d) => d.isPay);
+        const resSamples = computedLogs.filter((d) => d.isReservoir);
+
+        // Approximate thickness based on sample density
+        const avgStep = total > 1 ? grossInterval / (total - 1) : 0.5;
+        const netPayThickness = paySamples.length * avgStep;
+        const netResThickness = resSamples.length * avgStep;
+        const ntg = (netPayThickness / grossInterval) * 100;
+
+        const avgPhi = paySamples.length
+          ? (paySamples.reduce((acc, cur) => acc + cur.phiE, 0) / paySamples.length) * 100
+          : 0;
+
+        const avgSw = paySamples.length
+          ? (paySamples.reduce((acc, cur) => acc + cur.sw, 0) / paySamples.length) * 100
+          : 0;
+
+        return {
+          gross: grossInterval.toFixed(1),
+          netRes: netResThickness.toFixed(1),
+          netPay: netPayThickness.toFixed(1),
+          ntg: clamp(ntg, 0, 100).toFixed(1),
+          avgPhi: clamp(avgPhi, 0, 100).toFixed(1),
+          avgSw: clamp(avgSw, 0, 100).toFixed(1),
+          avgShc: clamp(100 - avgSw, 0, 100).toFixed(1)
+        };
+      }, [computedLogs]);
+
+      // --- DEPTH RANGE & SCALING ---
+      const { minDepth, maxDepth } = useMemo(() => {
+        if (computedLogs.length === 0) return { minDepth: 2050, maxDepth: 2150 };
+        return {
+          minDepth: computedLogs[0].depth,
+          maxDepth: computedLogs[computedLogs.length - 1].depth
+        };
+      }, [computedLogs]);
+
+      const trackHeight = 650;
+      const trackWidth = 140;
+
+      const depthToY = (depth) => {
+        if (maxDepth === minDepth) return 0;
+        return ((depth - minDepth) / (maxDepth - minDepth)) * trackHeight;
+      };
+
+      // --- HANDLERS: ADD SINGLE POINT ---
+      const handleAddPoint = (e) => {
+        e.preventDefault();
+        const cleaned = sanitizeRow(customPoint);
+        setRawData((prev) => {
+          const filtered = prev.filter((p) => p.depth !== cleaned.depth);
+          return [...filtered, cleaned].sort((a, b) => a.depth - b.depth);
+        });
+        setShowAddPointModal(false);
+      };
+
+      // --- HANDLERS: MANUAL CSV/DATA EDITOR ---
+      const handleOpenManualEditor = () => {
+        const text = computedLogs
+          .map((r) => `${r.depth}\t${r.gr.toFixed(1)}\t${r.res.toFixed(1)}\t${r.rhob.toFixed(2)}\t${r.nphi.toFixed(2)}\t${r.cali.toFixed(1)}`)
+          .join('\n');
+        setManualText(text);
+        setShowManualEditor(true);
+      };
+
+      const handleApplyManualData = () => {
+        try {
+          const lines = manualText.trim().split('\n');
+          const parsed = [];
+
+          for (let line of lines) {
+            const clean = line.trim();
+            if (!clean || clean.startsWith('#') || clean.toLowerCase().startsWith('depth')) continue;
+            
+            // Support both tab and comma separation
+            const parts = clean.includes('\t') ? clean.split('\t') : clean.split(',');
+            if (parts.length >= 4) {
+              parsed.push(
+                sanitizeRow({
+                  depth: parseFloat(parts[0]),
+                  gr: parseFloat(parts[1]),
+                  res: parseFloat(parts[2]),
+                  rhob: parseFloat(parts[3]),
+                  nphi: parts[4] ? parseFloat(parts[4]) : 0.15,
+                  cali: parts[5] ? parseFloat(parts[5]) : 8.5
+                })
+              );
+            }
+          }
+
+          if (parsed.length > 0) {
+            setRawData(parsed.sort((a, b) => a.depth - b.depth));
+            setShowManualEditor(false);
+          } else {
+            alert('Could not parse any valid rows. Please check format (Depth, GR, RES, RHOB, NPHI).');
+          }
+        } catch (err) {
+          alert('Error parsing data: ' + err.message);
+        }
+      };
+
+      // --- EXPORT CSV ---
+      const handleExportCSV = () => {
+        const headers = 'Depth_m,GR_API,CALI_in,RES_ohmm,RHOB_gcc,NPHI_dec,VSH_dec,PHIE_dec,Sw_dec,IsPay\n';
+        const rows = computedLogs
+          .map(
+            (r) =>
+              `${r.depth},${r.gr.toFixed(2)},${r.cali.toFixed(2)},${r.res.toFixed(2)},${r.rhob.toFixed(2)},${r.nphi.toFixed(2)},${r.vsh.toFixed(3)},${r.phiE.toFixed(3)},${r.sw.toFixed(3)},${r.isPay ? 1 : 0}`
+          )
+          .join('\n');
+
+        const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `WellLog_Evaluation_${Date.now()}.csv`;
+        link.click();
+      };
+
+      const currentHoveredData = (hoveredIndex !== null && computedLogs[hoveredIndex]) ? computedLogs[hoveredIndex] : null;
+
+      return (
+        <div className={`min-h-screen ${themeStyles.appBg} p-4 md:p-6 transition-colors duration-200`}>
+          {/* Header */}
+          <header className={`flex flex-wrap items-center justify-between border-b ${themeStyles.border} pb-4 mb-6 gap-4`}>
+            <div>
+              <div className="flex items-center gap-2">
+                <IconActivity className="h-6 w-6 text-emerald-400" />
+                <h1 className="text-xl md:text-2xl font-bold tracking-tight bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 bg-clip-text text-transparent">
+                  PETROLOG-PRO // Well Log Evaluator
+                </h1>
+                <span className="ml-2 text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                  v2.5 Pro
+                </span>
+              </div>
+              <p className={`text-xs ${themeStyles.subText} mt-1 font-mono`}>
+                Interval: {minDepth.toFixed(1)}m – {maxDepth.toFixed(1)}m | Archie & Shaly-Sand Workflow
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Theme Selector */}
+              <div className="flex rounded-lg border border-slate-700/50 p-0.5 bg-slate-900/40 text-xs mr-2">
+                <button
+                  onClick={() => setTheme('slate')}
+                  className={`px-2 py-1 rounded transition-all ${theme === 'slate' ? 'bg-slate-700 text-white font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  Dark
+                </button>
+                <button
+                  onClick={() => setTheme('obsidian')}
+                  className={`px-2 py-1 rounded transition-all ${theme === 'obsidian' ? 'bg-neutral-800 text-white font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  OLED
+                </button>
+                <button
+                  onClick={() => setTheme('light')}
+                  className={`px-2 py-1 rounded transition-all ${theme === 'light' ? 'bg-white text-slate-900 font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  Light
+                </button>
+              </div>
+
+              {/* Data Actions */}
+              <button
+                onClick={() => setShowAddPointModal(true)}
+                className="flex items-center gap-1.5 bg-indigo-600/90 hover:bg-indigo-600 text-white px-3 py-1.5 rounded text-xs font-semibold transition-colors"
+              >
+                <IconPlus className="h-3.5 w-3.5" /> Add Point
+              </button>
+              <button
+                onClick={handleOpenManualEditor}
+                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600/50 px-3 py-1.5 rounded text-xs font-semibold transition-colors"
+              >
+                <IconCode className="h-3.5 w-3.5 text-cyan-400" /> Advanced Editor
+              </button>
+              <button
+                onClick={() => setRawData(generateSyntheticLogData())}
+                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600/50 px-3 py-1.5 rounded text-xs font-medium transition-colors"
+              >
+                <IconRefresh className="h-3.5 w-3.5" /> Re-seed
+              </button>
+              <button
+                onClick={handleExportCSV}
+                className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-1.5 rounded text-xs transition-colors shadow-sm"
+              >
+                <IconDownload className="h-3.5 w-3.5" /> Export CSV
+              </button>
+            </div>
+          </header>
+
+          {/* KPI Display */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+            <div className={`${themeStyles.cardBg} p-3 rounded-lg border`}>
+              <p className={`text-[10px] font-mono font-medium uppercase tracking-wider ${themeStyles.subText}`}>Net Pay</p>
+              <p className="text-2xl font-black text-emerald-400 mt-1 font-mono">
+                {metrics.netPay} <span className="text-xs font-normal text-slate-400">m</span>
+              </p>
+            </div>
+            <div className={`${themeStyles.cardBg} p-3 rounded-lg border`}>
+              <p className={`text-[10px] font-mono font-medium uppercase tracking-wider ${themeStyles.subText}`}>Net-to-Gross</p>
+              <p className="text-2xl font-black text-cyan-400 mt-1 font-mono">
+                {metrics.ntg}<span className="text-xs font-normal text-slate-400">%</span>
+              </p>
+            </div>
+            <div className={`${themeStyles.cardBg} p-3 rounded-lg border`}>
+              <p className={`text-[10px] font-mono font-medium uppercase tracking-wider ${themeStyles.subText}`}>Net Reservoir</p>
+              <p className="text-2xl font-black text-slate-200 mt-1 font-mono">
+                {metrics.netRes} <span className="text-xs font-normal text-slate-400">m</span>
+              </p>
+            </div>
+            <div className={`${themeStyles.cardBg} p-3 rounded-lg border`}>
+              <p className={`text-[10px] font-mono font-medium uppercase tracking-wider ${themeStyles.subText}`}>Avg Φe (Pay)</p>
+              <p className="text-2xl font-black text-amber-400 mt-1 font-mono">
+                {metrics.avgPhi}<span className="text-xs font-normal text-slate-400">%</span>
+              </p>
+            </div>
+            <div className={`${themeStyles.cardBg} p-3 rounded-lg border`}>
+              <p className={`text-[10px] font-mono font-medium uppercase tracking-wider ${themeStyles.subText}`}>Avg Sw (Pay)</p>
+              <p className="text-2xl font-black text-sky-400 mt-1 font-mono">
+                {metrics.avgSw}<span className="text-xs font-normal text-slate-400">%</span>
+              </p>
+            </div>
+            <div className={`${themeStyles.cardBg} p-3 rounded-lg border`}>
+              <p className={`text-[10px] font-mono font-medium uppercase tracking-wider ${themeStyles.subText}`}>Avg Hydrocarbon</p>
+              <p className="text-2xl font-black text-orange-400 mt-1 font-mono">
+                {metrics.avgShc}<span className="text-xs font-normal text-slate-400">%</span>
+              </p>
+            </div>
+          </div>
+
+          {/* Main Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left Column: Parameter & Cutoff Controls */}
+            <div className="lg:col-span-4 flex flex-col gap-4">
+              {/* Petrophysical Controls */}
+              <div className={`${themeStyles.cardBg} rounded-lg p-4 border`}>
+                <div className="flex items-center gap-2 mb-3 text-emerald-400 border-b border-slate-700/50 pb-2">
+                  <IconSliders className="h-4 w-4" />
+                  <h2 className="text-xs font-bold font-mono tracking-wide uppercase">Archie & Matrix Parameters</h2>
+                </div>
+
+                <div className="space-y-3.5">
+                  <div>
+                    <label className={`text-xs font-medium ${themeStyles.subText} block mb-1.5`}>Matrix Lithology</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { label: 'Sandstone', val: 2.65 },
+                        { label: 'Limestone', val: 2.71 },
+                        { label: 'Dolomite', val: 2.87 }
+                      ].map((item) => (
+                        <button
+                          key={item.label}
+                          onClick={() => setRhoMatrix(item.val)}
+                          className={`text-xs py-1 px-1.5 rounded border transition-all ${
+                            rhoMatrix === item.val
+                              ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 font-bold'
+                              : 'border-slate-800 bg-slate-950/50 text-slate-400 hover:border-slate-700'
+                          }`}
+                        >
+                          {item.label}
+                          <span className="block text-[10px] font-mono opacity-70">{item.val}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs mb-1 font-mono">
+                      <span className={themeStyles.subText}>Rw (Water Resistivity)</span>
+                      <span className="text-cyan-400 font-bold">{rw.toFixed(3)} Ω·m</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.01"
+                      max="0.25"
+                      step="0.005"
+                      value={rw}
+                      onChange={(e) => setRw(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-cyan-400"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="flex justify-between text-xs mb-1 font-mono">
+                        <span className={themeStyles.subText}>m (Cement)</span>
+                        <span className="text-cyan-400 font-bold">{m.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1.4"
+                        max="2.6"
+                        step="0.05"
+                        value={m}
+                        onChange={(e) => setM(parseFloat(e.target.value))}
+                        className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-cyan-400"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-xs mb-1 font-mono">
+                        <span className={themeStyles.subText}>n (Saturation)</span>
+                        <span className="text-cyan-400 font-bold">{n.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1.4"
+                        max="2.6"
+                        step="0.05"
+                        value={n}
+                        onChange={(e) => setN(parseFloat(e.target.value))}
+                        className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-cyan-400"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-800/80">
+                    <div>
+                      <div className="flex justify-between text-xs mb-1 font-mono">
+                        <span className={themeStyles.subText}>GR Clean</span>
+                        <span className="text-emerald-400 font-bold">{grClean}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="5"
+                        max="50"
+                        step="1"
+                        value={grClean}
+                        onChange={(e) => setGrClean(parseInt(e.target.value))}
+                        className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-emerald-400"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-xs mb-1 font-mono">
+                        <span className={themeStyles.subText}>GR Shale</span>
+                        <span className="text-emerald-400 font-bold">{grShale}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="80"
+                        max="200"
+                        step="5"
+                        value={grShale}
+                        onChange={(e) => setGrShale(parseInt(e.target.value))}
+                        className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-emerald-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cutoffs */}
+              <div className={`${themeStyles.cardBg} rounded-lg p-4 border`}>
+                <div className="flex items-center gap-2 mb-3 text-amber-400 border-b border-slate-700/50 pb-2">
+                  <IconFilter className="h-4 w-4" />
+                  <h2 className="text-xs font-bold font-mono tracking-wide uppercase">Reservoir & Pay Cutoffs</h2>
+                </div>
+
+                <div className="space-y-3.5">
+                  <div>
+                    <div className="flex justify-between text-xs mb-1 font-mono">
+                      <span className={themeStyles.subText}>Max Shale Volume (Vsh)</span>
+                      <span className="text-amber-400 font-bold">{(vshCutoff * 100).toFixed(0)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.10"
+                      max="0.60"
+                      step="0.01"
+                      value={vshCutoff}
+                      onChange={(e) => setVshCutoff(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-400"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs mb-1 font-mono">
+                      <span className={themeStyles.subText}>Min Effective Porosity (Φe)</span>
+                      <span className="text-amber-400 font-bold">{(phiCutoff * 100).toFixed(0)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.03"
+                      max="0.25"
+                      step="0.01"
+                      value={phiCutoff}
+                      onChange={(e) => setPhiCutoff(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-400"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-xs mb-1 font-mono">
+                      <span className={themeStyles.subText}>Max Water Saturation (Sw)</span>
+                      <span className="text-amber-400 font-bold">{(swCutoff * 100).toFixed(0)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.20"
+                      max="0.80"
+                      step="0.02"
+                      value={swCutoff}
+                      onChange={(e) => setSwCutoff(parseFloat(e.target.value))}
+                      className="w-full h-1.5 bg-slate-800 rounded appearance-none cursor-pointer accent-amber-400"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Cursor Depth Inspection Card */}
+              <div className={`${themeStyles.cardBg} rounded-lg p-4 border flex-1`}>
+                <h3 className={`text-xs font-bold font-mono ${themeStyles.subText} uppercase tracking-wider mb-2`}>
+                  Depth Cursor Inspection
+                </h3>
+                {currentHoveredData ? (
+                  <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                    <div className={`${themeStyles.inputBg} p-2 rounded border`}>
+                      <span className={`block text-[10px] ${themeStyles.subText}`}>DEPTH</span>
+                      <span className="font-bold text-sm">{currentHoveredData.depth.toFixed(1)} m</span>
+                    </div>
+                    <div className={`${themeStyles.inputBg} p-2 rounded border`}>
+                      <span className={`block text-[10px] ${themeStyles.subText}`}>PAY STATUS</span>
+                      <span className={currentHoveredData.isPay ? "text-emerald-400 font-bold" : "text-slate-500 font-medium"}>
+                        {currentHoveredData.isPay ? "PAY ZONE" : "NON-PAY"}
+                      </span>
+                    </div>
+                    <div className={`${themeStyles.inputBg} p-2 rounded border`}>
+                      <span className={`block text-[10px] ${themeStyles.subText}`}>GAMMA RAY</span>
+                      <span className="text-emerald-400 font-bold">{currentHoveredData.gr.toFixed(1)} API</span>
+                    </div>
+                    <div className={`${themeStyles.inputBg} p-2 rounded border`}>
+                      <span className={`block text-[10px] ${themeStyles.subText}`}>RESISTIVITY</span>
+                      <span className="text-orange-400 font-bold">{currentHoveredData.res.toFixed(1)} Ω·m</span>
+                    </div>
+                    <div className={`${themeStyles.inputBg} p-2 rounded border`}>
+                      <span className={`block text-[10px] ${themeStyles.subText}`}>POROSITY (Φe)</span>
+                      <span className="text-amber-400 font-bold">{(currentHoveredData.phiE * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className={`${themeStyles.inputBg} p-2 rounded border`}>
+                      <span className={`block text-[10px] ${themeStyles.subText}`}>WATER SAT (Sw)</span>
+                      <span className="text-cyan-400 font-bold">{(currentHoveredData.sw * 100).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className={`text-xs ${themeStyles.subText} italic py-4 text-center font-mono`}>
+                    Hover over tracks on the right to inspect depth points.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column: Multi-Track SVG Log */}
+            <div className={`lg:col-span-8 ${themeStyles.cardBg} rounded-lg p-4 border flex flex-col items-center overflow-x-auto`}>
+              <div className="flex gap-2 mb-3 w-full justify-between items-center text-xs px-2 min-w-[680px]">
+                <span className="font-mono font-bold uppercase tracking-wider text-slate-300">Composite Multi-Track Display</span>
+                <div className="flex gap-4 font-mono text-[11px]">
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-emerald-400 rounded-xs"></span> GR</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-orange-400 rounded-xs"></span> Res</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-red-400 rounded-xs"></span> RHOB / <span className="text-sky-400">NPHI</span></span>
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-emerald-500 rounded-xs"></span> Pay</span>
+                </div>
+              </div>
+
+              <div className={`relative border ${themeStyles.border} rounded p-3 select-none shadow-xl min-w-[700px]`} style={{ backgroundColor: themeStyles.trackBg }}>
+                {/* Track Headers */}
+                <div className="grid grid-cols-12 text-[10px] font-mono font-bold text-slate-400 mb-2 border-b border-slate-800 pb-1 text-center">
+                  <div className="col-span-1">DEPTH</div>
+                  <div className="col-span-3 text-emerald-400">TRACK 1: GR (0-150 API)</div>
+                  <div className="col-span-3 text-orange-400">TRACK 2: RES (0.2-2000 Ω·m)</div>
+                  <div className="col-span-3 text-red-400">TRACK 3: NPHI/RHOB</div>
+                  <div className="col-span-2 text-cyan-400">TRACK 4: Sw & PAY</div>
+                </div>
+
+                <svg
+                  width="680"
+                  height={trackHeight}
+                  className="cursor-crosshair overflow-visible"
+                  onMouseLeave={() => setHoveredIndex(null)}
+                  onMouseMove={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const y = e.clientY - rect.top;
+                    const ratio = clamp(y / trackHeight, 0, 1);
+                    const index = Math.min(computedLogs.length - 1, Math.floor(ratio * computedLogs.length));
+                    setHoveredIndex(index);
+                  }}
+                >
+                  {/* Grid Lines */}
+                  {Array.from({ length: 9 }).map((_, idx) => {
+                    const depthVal = minDepth + ((maxDepth - minDepth) / 10) * (idx + 1);
+                    const y = depthToY(depthVal);
+                    return (
+                      <g key={idx}>
+                        <line x1="0" y1={y} x2="680" y2={y} stroke={themeStyles.gridLine} strokeDasharray="3 3" />
+                        <text x="2" y={y - 4} fill="#64748b" fontSize="9" fontFamily="monospace">
+                          {depthVal.toFixed(0)}m
+                        </text>
+                      </g>
+                    );
+                  })}
+
+                  {/* TRACK 1: Gamma Ray */}
+                  <g transform="translate(50, 0)">
+                    <rect width={trackWidth} height={trackHeight} fill="none" stroke="#334155" strokeWidth="1" />
+                    <path
+                      d={computedLogs
+                        .map((d, i) => {
+                          const x = clamp((d.gr / 150) * trackWidth, 0, trackWidth);
+                          const y = depthToY(d.depth);
+                          return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                        })
+                        .join(' ')}
+                      fill="none"
+                      stroke="#34d399"
+                      strokeWidth="1.5"
+                    />
+                  </g>
+
+                  {/* TRACK 2: Deep Resistivity (Logarithmic) */}
+                  <g transform="translate(200, 0)">
+                    <rect width={trackWidth} height={trackHeight} fill="none" stroke="#334155" strokeWidth="1" />
+                    {[1, 10, 100, 1000].map((rVal) => {
+                      const logMin = Math.log10(0.2);
+                      const logMax = Math.log10(2000);
+                      const x = ((Math.log10(rVal) - logMin) / (logMax - logMin)) * trackWidth;
+                      return (
+                        <line key={rVal} x1={x} y1="0" x2={x} y2={trackHeight} stroke={themeStyles.gridLine} strokeDasharray="2 2" />
+                      );
+                    })}
+                    <path
+                      d={computedLogs
+                        .map((d, i) => {
+                          const logMin = Math.log10(0.2);
+                          const logMax = Math.log10(2000);
+                          const logVal = Math.log10(clamp(d.res, 0.2, 2000));
+                          const x = ((logVal - logMin) / (logMax - logMin)) * trackWidth;
+                          const y = depthToY(d.depth);
+                          return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                        })
+                        .join(' ')}
+                      fill="none"
+                      stroke="#fb923c"
+                      strokeWidth="1.5"
+                    />
+                  </g>
+
+                  {/* TRACK 3: Porosity / Gas Crossover */}
+                  <g transform="translate(350, 0)">
+                    <rect width={trackWidth} height={trackHeight} fill="none" stroke="#334155" strokeWidth="1" />
+                    {computedLogs.map((d, i) => {
+                      if (i === computedLogs.length - 1) return null;
+                      const next = computedLogs[i + 1];
+                      const xRhob = clamp(((d.rhob - 1.95) / (2.95 - 1.95)) * trackWidth, 0, trackWidth);
+                      const xNphi = clamp(((0.45 - d.nphi) / 0.45) * trackWidth, 0, trackWidth);
+
+                      if (xNphi > xRhob) {
+                        const y1 = depthToY(d.depth);
+                        const y2 = depthToY(next.depth);
+                        return (
+                          <polygon
+                            key={`cross-${i}`}
+                            points={`${xRhob},${y1} ${xNphi},${y1} ${xNphi},${y2} ${xRhob},${y2}`}
+                            fill="#facc15"
+                            fillOpacity="0.35"
+                          />
+                        );
+                      }
+                      return null;
+                    })}
+                    <path
+                      d={computedLogs
+                        .map((d, i) => {
+                          const x = clamp(((d.rhob - 1.95) / (2.95 - 1.95)) * trackWidth, 0, trackWidth);
+                          const y = depthToY(d.depth);
+                          return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                        })
+                        .join(' ')}
+                      fill="none"
+                      stroke="#f87171"
+                      strokeWidth="1.5"
+                    />
+                    <path
+                      d={computedLogs
+                        .map((d, i) => {
+                          const x = clamp(((0.45 - d.nphi) / 0.45) * trackWidth, 0, trackWidth);
+                          const y = depthToY(d.depth);
+                          return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                        })
+                        .join(' ')}
+                      fill="none"
+                      stroke="#38bdf8"
+                      strokeDasharray="3 2"
+                      strokeWidth="1.5"
+                    />
+                  </g>
+
+                  {/* TRACK 4: Saturation & Pay Flag */}
+                  <g transform="translate(500, 0)">
+                    <rect width={trackWidth + 20} height={trackHeight} fill="none" stroke="#334155" strokeWidth="1" />
+                    <path
+                      d={computedLogs
+                        .map((d, i) => {
+                          const x = clamp(d.sw * trackWidth, 0, trackWidth);
+                          const y = depthToY(d.depth);
+                          return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                        })
+                        .join(' ')}
+                      fill="none"
+                      stroke="#38bdf8"
+                      strokeWidth="1.5"
+                    />
+                    {computedLogs.map((d, i) => {
+                      if (!d.isPay) return null;
+                      const y = depthToY(d.depth);
+                      return (
+                        <rect
+                          key={`pay-${i}`}
+                          x={trackWidth + 4}
+                          y={y}
+                          width={12}
+                          height={Math.max(2, trackHeight / computedLogs.length)}
+                          fill="#10b981"
+                        />
+                      );
+                    })}
+                  </g>
+
+                  {/* Interactive Cursor Line */}
+                  {hoveredIndex !== null && computedLogs[hoveredIndex] && (
+                    <g>
+                      <line
+                        x1="0"
+                        y1={depthToY(computedLogs[hoveredIndex].depth)}
+                        x2="680"
+                        y2={depthToY(computedLogs[hoveredIndex].depth)}
+                        stroke={themeStyles.accentTrack}
+                        strokeWidth="1.5"
+                        strokeDasharray="4 2"
+                      />
+                      <rect
+                        x="0"
+                        y={depthToY(computedLogs[hoveredIndex].depth) - 10}
+                        width="48"
+                        height="20"
+                        fill="#0284c7"
+                        rx="3"
+                      />
+                      <text
+                        x="4"
+                        y={depthToY(computedLogs[hoveredIndex].depth) + 4}
+                        fill="#ffffff"
+                        fontSize="10"
+                        fontWeight="bold"
+                        fontFamily="monospace"
+                      >
+                        {computedLogs[hoveredIndex].depth.toFixed(1)}m
+                      </text>
+                    </g>
+                  )}
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          {/* MODAL 1: ADD SINGLE CUSTOM POINT */}
+          {showAddPointModal && (
+            <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+              <div className={`${themeStyles.cardBg} border ${themeStyles.border} rounded-xl p-6 max-w-md w-full shadow-2xl`}>
+                <h3 className="text-base font-bold mb-4 font-mono text-emerald-400 flex items-center gap-2">
+                  <IconPlus className="h-5 w-5" /> Insert Custom Well Log Point
+                </h3>
+
+                <form onSubmit={handleAddPoint} className="space-y-3 font-mono text-xs">
+                  <div>
+                    <label className={themeStyles.subText}>Measured Depth (m)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      required
+                      value={customPoint.depth}
+                      onChange={(e) => setCustomPoint({ ...customPoint, depth: parseFloat(e.target.value) })}
+                      className={`w-full mt-1 p-2 rounded border ${themeStyles.inputBg}`}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={themeStyles.subText}>Gamma Ray (0-300 API)</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        required
+                        value={customPoint.gr}
+                        onChange={(e) => setCustomPoint({ ...customPoint, gr: parseFloat(e.target.value) })}
+                        className={`w-full mt-1 p-2 rounded border ${themeStyles.inputBg}`}
+                      />
+                    </div>
+                    <div>
+                      <label className={themeStyles.subText}>Resistivity (0.1-5000 Ω·m)</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        required
+                        value={customPoint.res}
+                        onChange={(e) => setCustomPoint({ ...customPoint, res: parseFloat(e.target.value) })}
+                        className={`w-full mt-1 p-2 rounded border ${themeStyles.inputBg}`}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={themeStyles.subText}>RHOB (1.0-3.5 g/cc)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        value={customPoint.rhob}
+                        onChange={(e) => setCustomPoint({ ...customPoint, rhob: parseFloat(e.target.value) })}
+                        className={`w-full mt-1 p-2 rounded border ${themeStyles.inputBg}`}
+                      />
+                    </div>
+                    <div>
+                      <label className={themeStyles.subText}>NPHI (-0.05 to 0.60 dec)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        value={customPoint.nphi}
+                        onChange={(e) => setCustomPoint({ ...customPoint, nphi: parseFloat(e.target.value) })}
+                        className={`w-full mt-1 p-2 rounded border ${themeStyles.inputBg}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddPointModal(false)}
+                      className="px-4 py-2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold"
+                    >
+                      Save & Recompute
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL 2: ADVANCED BULK / MANUAL DATA INPUT */}
+          {showManualEditor && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+              <div className={`${themeStyles.cardBg} border ${themeStyles.border} rounded-xl p-6 max-w-2xl w-full shadow-2xl flex flex-col max-h-[90vh]`}>
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="text-base font-bold font-mono text-cyan-400 flex items-center gap-2">
+                    <IconCode className="h-5 w-5" /> Advanced Raw Well Data Editor
+                  </h3>
+                  <span className="text-[11px] font-mono text-slate-400">Supports Tab or CSV formatted text</span>
+                </div>
+
+                <p className={`text-xs ${themeStyles.subText} mb-2`}>
+                  Paste or edit your continuous log curves directly. Columns: <code className="text-cyan-300 font-mono">Depth GR Res RHOB NPHI CALI</code>. Out-of-bounds values will be safely clamped.
+                </p>
+
+                <textarea
+                  value={manualText}
+                  onChange={(e) => setManualText(e.target.value)}
+                  className={`w-full flex-1 min-h-[300px] p-3 rounded font-mono text-xs border ${themeStyles.inputBg} focus:outline-none focus:border-cyan-400 whitespace-pre`}
+                  spellCheck="false"
+                />
+
+                <div className="flex justify-between items-center gap-2 pt-4">
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {manualText.split('\n').filter(Boolean).length} rows ready
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowManualEditor(false)}
+                      className="px-4 py-2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-mono"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleApplyManualData}
+                      className="px-4 py-2 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs font-mono"
+                    >
+                      Apply & Run Pipeline
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
